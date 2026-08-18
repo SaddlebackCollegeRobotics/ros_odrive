@@ -34,10 +34,19 @@ ODriveCanNode::ODriveCanNode(const std::string& node_name) : rclcpp::Node(node_n
     rclcpp::Node::declare_parameter<uint16_t>("node_id", 0);
     rclcpp::Node::declare_parameter<bool>("axis_idle_on_shutdown", false);
 
-    rclcpp::QoS ctrl_stat_qos(rclcpp::KeepAll{});
+    // SCR patch (2026-08-17): KeepLast, not KeepAll. With a RELIABLE KEEP_ALL
+    // history, one reliable subscriber vanishing ungracefully (a laptop
+    // dropping off the network mid-drive) fills the history with
+    // unacknowledged samples until DDS write() fails, rclcpp throws, and the
+    // uncaught exception aborts the node -- all four axis nodes died this way
+    // ('failed to publish message: cannot publish data', exit -6). KEEP_LAST
+    // lets the writer discard stale unacked telemetry instead; readers only
+    // care about the newest sample. Reliability is unchanged, so existing
+    // reliable subscribers still match.
+    rclcpp::QoS ctrl_stat_qos(rclcpp::KeepLast(10));
     ctrl_publisher_ = rclcpp::Node::create_publisher<ControllerStatus>("controller_status", ctrl_stat_qos);
-    
-    rclcpp::QoS odrv_stat_qos(rclcpp::KeepAll{});
+
+    rclcpp::QoS odrv_stat_qos(rclcpp::KeepLast(10));
     odrv_publisher_ = rclcpp::Node::create_publisher<ODriveStatus>("odrive_status", odrv_stat_qos);
 
     rclcpp::QoS ctrl_msg_qos(rclcpp::KeepAll{});
@@ -178,13 +187,25 @@ void ODriveCanNode::recv_callback(const can_frame& frame) {
         }
     }
     
+    // SCR patch (2026-08-17): a failed telemetry publish must never abort the
+    // process that drives a motor. Drop the sample, log throttled, keep going.
     if (ctrl_pub_flag_ == 0b1111) {
-        ctrl_publisher_->publish(ctrl_stat_);
+        try {
+            ctrl_publisher_->publish(ctrl_stat_);
+        } catch (const std::exception& e) {
+            RCLCPP_WARN_THROTTLE(rclcpp::Node::get_logger(), *rclcpp::Node::get_clock(), 1000,
+                "dropping controller_status publish: %s", e.what());
+        }
         ctrl_pub_flag_ = 0;
     }
-    
+
     if (odrv_pub_flag_ == 0b111) {
-        odrv_publisher_->publish(odrv_stat_);
+        try {
+            odrv_publisher_->publish(odrv_stat_);
+        } catch (const std::exception& e) {
+            RCLCPP_WARN_THROTTLE(rclcpp::Node::get_logger(), *rclcpp::Node::get_clock(), 1000,
+                "dropping odrive_status publish: %s", e.what());
+        }
         odrv_pub_flag_ = 0;
     }
 }
