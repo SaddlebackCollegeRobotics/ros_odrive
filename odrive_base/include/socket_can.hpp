@@ -11,18 +11,20 @@ using FrameProcessor = std::function<void(const can_frame&)>;
 
 class SocketCanIntf {
 public:
+    SocketCanIntf() = default;
+    ~SocketCanIntf();
+    SocketCanIntf(const SocketCanIntf&) = delete;
+    SocketCanIntf& operator=(const SocketCanIntf&) = delete;
     bool init(const std::string& interface, EpollEventLoop* event_loop, FrameProcessor frame_processor);
     void deinit();
     bool send_can_frame(const can_frame& frame);
 
     bool read_nonblocking();
 private:
-    std::string interface_;
     int socket_id_ = -1;
     EpollEventLoop* event_loop_ = nullptr;
-    EpollEventLoop::EvtId socket_evt_id_;
+    EpollEventLoop::EventContext socket_evt_;
     FrameProcessor frame_processor_;
-    bool broken_ = false;
 
     void on_socket_event(uint32_t mask);
     void process_can_frame(const can_frame& frame) {

@@ -1,18 +1,24 @@
 #include "odrive_can_node.hpp"
 #include "epoll_event_loop.hpp"
-#include "socket_can.hpp"
-#include <thread>
+#include <cstdio>
 
 int main(int argc, char* argv[]) {
     rclcpp::init(argc, argv);
-    EpollEventLoop event_loop;
-    auto can_node = std::make_shared<ODriveCanNode>("ODriveCanNode");
-
-    if (!can_node->init(&event_loop)) return -1;
-
-    std::thread can_event_loop([&event_loop]() { event_loop.run_until_empty(); });
-    rclcpp::spin(can_node);
-    can_node->deinit();
+    int result = 0;
+    try {
+        // The loop outlives the node. The node joins its worker before removing
+        // registrations, closing descriptors, or destroying callback targets.
+        EpollEventLoop event_loop;
+        auto can_node = std::make_shared<ODriveCanNode>("ODriveCanNode");
+        if (can_node->init(&event_loop)) {
+            rclcpp::spin(can_node);
+        } else {
+            result = 1;
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "ODrive CAN node failed: %s\n", e.what());
+        result = 1;
+    }
     rclcpp::shutdown();
-    return 0;
+    return result;
 }
